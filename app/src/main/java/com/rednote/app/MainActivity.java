@@ -2,22 +2,25 @@ package com.rednote.app;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.content.Intent;
-import android.net.Uri;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
@@ -31,19 +34,19 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private static final String HOME_URL = "https://rednote.sulsul.top";
 
+    private ValueCallback<Uri[]> uploadMessage;
+    private static final int FILE_CHOOSER_REQUEST_CODE = 1001;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Root layout
         FrameLayout rootLayout = new FrameLayout(this);
 
-        // SwipeRefresh for pull-to-refresh
         swipeRefreshLayout = new SwipeRefreshLayout(this);
         swipeRefreshLayout.setColorSchemeColors(0xFFFF2442);
         swipeRefreshLayout.setProgressBackgroundColorSchemeColor(0xFFFFFFFF);
 
-        // Progress bar at top
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setLayoutParams(new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -52,7 +55,6 @@ public class MainActivity extends AppCompatActivity {
         progressBar.setProgressDrawable(getResources().getDrawable(R.drawable.progress_bar));
         progressBar.setMax(100);
 
-        // WebView
         webView = new WebView(this);
         setupWebView();
 
@@ -60,12 +62,9 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(swipeRefreshLayout);
         rootLayout.addView(progressBar);
 
-        swipeRefreshLayout.setOnRefreshListener(() -> {
-            webView.reload();
-        });
+        swipeRefreshLayout.setOnRefreshListener(() -> webView.reload());
 
         setContentView(rootLayout);
-
         webView.loadUrl(HOME_URL);
     }
 
@@ -73,37 +72,43 @@ public class MainActivity extends AppCompatActivity {
     private void setupWebView() {
         WebSettings settings = webView.getSettings();
 
-        // JavaScript
+        // JavaScript — full support
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-        // Rendering
+        // Rendering — match mobile viewport exactly
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setSupportZoom(true);
+        settings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NARROW_COLUMNS);
 
-        // Mixed content: allow HTTP images on HTTPS pages
+        // Mixed content — ALWAYS_ALLOW to fix most display issues
+        // Many sites load resources (images, fonts) over HTTP on HTTPS pages
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
 
-        // Autofill
+        // No autofill
         settings.setSaveFormData(false);
         settings.setSavePassword(false);
 
-        // User agent (spoof slightly to avoid mobile restrictions)
-        String ua = settings.getUserAgentString();
-        settings.setUserAgentString(ua + " RedNoteApp/1.0");
+        // User agent — use standard mobile Chrome UA to avoid detection issues
+        settings.setUserAgentString("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36");
 
-        // Enable WebRTC and media for possible future features
+        // Media
         settings.setMediaPlaybackRequiresUserGesture(true);
 
         // JavaScript interface for native features
         webView.addJavascriptInterface(new WebAppInterface(), "RedNoteAndroid");
+
+        // Enable debugging in debug builds
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
 
         // WebViewClient
         webView.setWebViewClient(new WebViewClient() {
@@ -124,16 +129,13 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // Stay within the app for rednote.sulsul.top
                 if (url.startsWith(HOME_URL) || url.startsWith("https://rednote.sulsul.top")) {
                     return false;
                 }
-                // Open external links in browser
                 try {
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                     startActivity(intent);
                 } catch (Exception e) {
-                    // fallback: load in WebView
                     return false;
                 }
                 return true;
@@ -143,14 +145,13 @@ public class MainActivity extends AppCompatActivity {
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
                 super.onReceivedError(view, errorCode, description, failingUrl);
                 swipeRefreshLayout.setRefreshing(false);
-                // Show error page if no internet
                 if (!isNetworkAvailable()) {
                     loadErrorPage("网络连接失败，请检查网络后重试");
                 }
             }
         });
 
-        // WebChromeClient for progress
+        // WebChromeClient — handles progress, file chooser, permissions
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
@@ -160,12 +161,60 @@ public class MainActivity extends AppCompatActivity {
                     progressBar.setVisibility(View.GONE);
                 }
             }
+
+            // File upload support
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> filePathCallback, FileChooserParams params) {
+                if (uploadMessage != null) {
+                    uploadMessage.onReceiveValue(null);
+                    uploadMessage = null;
+                }
+                uploadMessage = filePathCallback;
+
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+
+                String[] acceptTypes = params.getAcceptTypes();
+                if (acceptTypes != null && acceptTypes.length > 0) {
+                    intent.setType(acceptTypes.length == 1 ? acceptTypes[0] : "*/*");
+                    if (acceptTypes.length > 1) {
+                        intent.putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes);
+                    }
+                }
+
+                startActivityForResult(Intent.createChooser(intent, "选择文件"), FILE_CHOOSER_REQUEST_CODE);
+                return true;
+            }
+
+            // Camera/mic permissions
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                request.grant(request.getResources());
+            }
         });
 
-        // Enable cookies
+        // Cookies
         CookieManager.getInstance().setAcceptCookie(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
+            if (uploadMessage == null) return;
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null) {
+                String dataString = data.getDataString();
+                if (dataString != null) {
+                    results = new Uri[]{Uri.parse(dataString)};
+                }
+            }
+            uploadMessage.onReceiveValue(results);
+            uploadMessage = null;
         }
     }
 
@@ -218,7 +267,6 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    // JavaScript interface class
     public class WebAppInterface {
         @JavascriptInterface
         public void retry() {
