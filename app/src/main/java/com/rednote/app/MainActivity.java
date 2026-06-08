@@ -84,8 +84,9 @@ public class MainActivity extends AppCompatActivity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setSupportZoom(true);
-        // Let the page decide its own layout
         settings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);
+        settings.setDefaultTextEncodingName("UTF-8");
+        settings.setStandardFontFamily("sans-serif");
 
         // Mixed content — ALWAYS_ALLOW to fix most display issues
         // Many sites load resources (images, fonts) over HTTP on HTTPS pages
@@ -125,6 +126,28 @@ public class MainActivity extends AppCompatActivity {
                 super.onPageFinished(view, url);
                 progressBar.setVisibility(View.GONE);
                 swipeRefreshLayout.setRefreshing(false);
+                
+                // Fix overlay/modal widths to match screen width
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    view.evaluateJavascript(
+                        "(function(){" +
+                        "  var s = document.createElement('style');" +
+                        "  s.id = 'rednote-apk-fix';" +
+                        "  s.textContent = '" +
+                        ".mo .mw { max-width:100vw !important; width:100% !important; border-radius:16px 16px 0 0; } " +
+                        ".fp { max-width:100vw !important; } " +
+                        ".lp { max-width:100vw !important; } " +
+                        ".pub-overlay { max-width:100vw !important; } " +
+                        "#pd-overlay { max-width:100vw !important; } " +
+                        "body > .top { max-width:100vw !important; } " +
+                        "';" +
+                        "  var existing = document.getElementById('rednote-apk-fix');" +
+                        "  if (existing) existing.remove();" +
+                        "  document.head.appendChild(s);" +
+                        "})();",
+                        null
+                    );
+                }
             }
 
             @Override
