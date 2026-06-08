@@ -84,7 +84,8 @@ public class MainActivity extends AppCompatActivity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setSupportZoom(true);
-        settings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NARROW_COLUMNS);
+        // Let the page decide its own layout
+        settings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);
 
         // Mixed content — ALWAYS_ALLOW to fix most display issues
         // Many sites load resources (images, fonts) over HTTP on HTTPS pages
